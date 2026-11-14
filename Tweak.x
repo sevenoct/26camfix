@@ -1,12 +1,13 @@
 // CamFix - tweak pendamping 26Cam (Legacy) untuk iPhone 7 / iOS 15.
-// Foto  : preview dibuat memanjang sampai ke belakang tombol shutter (seperti mode Video).
+// Foto  : 4:3 = bawaan; 16:9 = preview memanjang sampai belakang shutter + bingkai atas/bawah transparan.
 // Square: preview dibuat kotak 1:1 yang rata dengan bagian atas kotaknya (tidak terpotong).
 // Video : tidak disentuh.
-// Pengaturan: Settings > CamFix (Enabled / PhotoFix / SquareFix).
+// Pengaturan: Settings > CamFix.
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <math.h>
+#import <objc/runtime.h>
 
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
@@ -39,7 +40,7 @@ static UIView *CMXContainerFor(UIView *pv) {
 }
 
 // Hitung frame yang seharusnya untuk preview. NO = jangan diubah.
-// kind: 1 = Foto, 2 = Square
+// kind: 1 = Foto 16:9 (full-screen), 2 = Square
 static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out, int *kind) {
     if (CMXNum(CFSTR("Enabled"), 1) < 0.5) return NO;
     if (!pv.superview) return NO;
@@ -55,13 +56,11 @@ static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out, int *kind) {
         *out = CGRectMake(p.x, p.y, f.size.width, f.size.height);
         return YES;
     }
-    if (f.size.height >= ch - 5.0) return NO;   // Video (layar penuh)
-    if (CMXNum(CFSTR("PhotoFix"), 1) < 0.5) return NO;
+    if (f.size.height >= ch - 0.5) return NO;   // Video (layar penuh)
+    if (CMXNum(CFSTR("PhotoAspect"), 1) < 0.5) return NO;   // 0 = 4:3 normal
 
     *kind = 1;
-    CGFloat h = ch - 40.0 - 0.0;
-    if (h < f.size.height) h = f.size.height;
-    *out = CGRectMake(p.x, p.y, cw, h);
+    *out = CGRectMake(p.x, p.y, cw, ch - 1.0);
     return YES;
 }
 
@@ -103,15 +102,128 @@ static void CMXFit(UIView *v, CGSize stale, CGSize now, int depth) {
     }
 }
 
+static UIView *gDimTop = nil;
+static UIView *gDimBot = nil;
+
+static void CMXHideDims(void) {
+    gDimTop.hidden = YES;
+    gDimBot.hidden = YES;
+}
+
+static void CMXShowDims(UIView *pv) {
+    UIView *c = CMXContainerFor(pv);
+    UIView *vf = c.superview;
+    if (!c || !vf) return;
+    if (!gDimTop) {
+        gDimTop = [[UIView alloc] init];
+        gDimBot = [[UIView alloc] init];
+        for (UIView *d in @[gDimTop, gDimBot]) {
+            d.backgroundColor = [UIColor colorWithWhite:0 alpha:0.42];
+            d.userInteractionEnabled = NO;
+        }
+    }
+    for (UIView *d in @[gDimTop, gDimBot]) {
+        if (d.superview != vf) [vf insertSubview:d aboveSubview:c];
+        d.hidden = NO;
+    }
+    CGFloat w = vf.bounds.size.width, ch = c.bounds.size.height;
+    CGFloat y0 = c.frame.origin.y;
+    gDimTop.frame = CGRectMake(0, y0, w, ch * 0.15);
+    gDimBot.frame = CGRectMake(0, y0 + ch * 0.76, w, ch * 0.24 + 2);
+}
+
+#pragma mark - Chromatic dispersion
+
+static NSMutableSet<NSString *> *gDispNames = nil;
+
+static BOOL CMXHasDisp(NSString *s) {
+    return s && [s rangeOfString:@"ispersion" options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
+static BOOL CMXPrimitiveEnc(const char *e) {
+    if (!e || !e[0]) return NO;
+    return strchr("BcCsSiIlLqQfd", e[0]) != NULL;
+}
+
+static void CMXKillDispersionObject(id obj) {
+    Class cls = [obj class];
+    while (cls && cls != [NSObject class] && cls != [UIView class] && cls != [CALayer class]) {
+        unsigned n = 0;
+        objc_property_t *props = class_copyPropertyList(cls, &n);
+        for (unsigned i = 0; i < n; i++) {
+            NSString *name = [NSString stringWithUTF8String:property_getName(props[i])];
+            if (!CMXHasDisp(name)) continue;
+            char *t = property_copyAttributeValue(props[i], "T");
+            if (CMXPrimitiveEnc(t)) {
+                @try { [obj setValue:@0 forKey:name]; [gDispNames addObject:[@"P:" stringByAppendingString:name]]; } @catch (id e) {}
+            }
+            if (t) free(t);
+        }
+        if (props) free(props);
+        unsigned m = 0;
+        Ivar *ivars = class_copyIvarList(cls, &m);
+        for (unsigned i = 0; i < m; i++) {
+            NSString *name = [NSString stringWithUTF8String:ivar_getName(ivars[i])];
+            if (!CMXHasDisp(name)) continue;
+            if (CMXPrimitiveEnc(ivar_getTypeEncoding(ivars[i]))) {
+                NSString *key = [name hasPrefix:@"_"] ? [name substringFromIndex:1] : name;
+                @try { [obj setValue:@0 forKey:key]; [gDispNames addObject:[@"I:" stringByAppendingString:name]]; } @catch (id e) {}
+            }
+        }
+        if (ivars) free(ivars);
+        cls = class_getSuperclass(cls);
+    }
+}
+
+static void CMXKillDispersionFilters(CALayer *l, int depth) {
+    if (depth > 4) return;
+    for (NSString *prop in @[@"filters", @"backgroundFilters"]) {
+        NSArray *fs = nil;
+        @try { fs = [l valueForKey:prop]; } @catch (id e) {}
+        BOOL changed = NO;
+        for (id f in fs) {
+            if (![f respondsToSelector:@selector(inputKeys)]) continue;
+            NSArray *keys = nil;
+            @try { keys = [f performSelector:@selector(inputKeys)]; } @catch (id e) {}
+            for (id k in keys) {
+                if ([k isKindOfClass:[NSString class]] && CMXHasDisp(k)) {
+                    @try { [f setValue:@0 forKey:k]; changed = YES; [gDispNames addObject:[@"F:" stringByAppendingString:k]]; } @catch (id e) {}
+                }
+            }
+        }
+        if (changed) { @try { [l setValue:fs forKey:prop]; } @catch (id e) {} }
+    }
+    if (CMXHasDisp(l.name)) { l.hidden = YES; [gDispNames addObject:[@"L:" stringByAppendingString:l.name]]; }
+    for (CALayer *s in l.sublayers) CMXKillDispersionFilters(s, depth + 1);
+}
+
+static void CMXKillDispersionView(UIView *v, int depth) {
+    if (depth > 14) return;
+    NSString *cn = NSStringFromClass([v class]);
+    if (CMXHasDisp(cn)) { v.hidden = YES; [gDispNames addObject:[@"V:" stringByAppendingString:cn]]; }
+    BOOL glass = [cn hasPrefix:@"LG"] || [cn containsString:@"Glass"] || [cn containsString:@"Liquid"] ||
+                 [cn hasPrefix:@"CAM26"] || [cn containsString:@"Backdrop"];
+    if (glass) {
+        CMXKillDispersionObject(v);
+        CMXKillDispersionFilters(v.layer, 0);
+    }
+    for (UIView *s in v.subviews) CMXKillDispersionView(s, depth + 1);
+}
+
+static void CMXScanDispersion(void) {
+    if (!gDispNames) gDispNames = [NSMutableSet set];
+    for (UIWindow *w in UIApplication.sharedApplication.windows) CMXKillDispersionView(w, 0);
+}
+
 static void CMXApply(UIView *pv) {
     if (gFixing || !pv) return;
     CGRect f = pv.frame;
     CGRect t = CGRectZero;
     int kind = 0;
-    if (!CMXTargetRect(pv, f, &t, &kind)) return;
+    if (!CMXTargetRect(pv, f, &t, &kind)) { CMXHideDims(); return; }
     gFixing = YES;
     if (kind == 1) {
-        if (fabs(f.origin.y - t.origin.y) > 0.5 || fabs(f.origin.x - t.origin.x) > 0.5 ||
+        if (fabs(f.origin.x - t.origin.x) > 0.5 ||
             fabs(f.size.width - t.size.width) > 0.5 || fabs(f.size.height - t.size.height) > 0.5) {
             if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
             pv.frame = t;
@@ -119,8 +231,11 @@ static void CMXApply(UIView *pv) {
         if (gStale.width > 0 && !CMXSizeNear(gStale, pv.bounds.size)) {
             CMXFit(pv, gStale, pv.bounds.size, 0);
         }
+        CMXShiftToContainerTop(pv);
+        if (CMXNum(CFSTR("Translucent"), 1) > 0.5) CMXShowDims(pv); else CMXHideDims();
     } else if (kind == 2) {
         CMXShiftToContainerTop(pv);
+        CMXHideDims();
     }
     gFixing = NO;
 }
@@ -160,6 +275,7 @@ static UIView *CMXFindPreview(UIView *root, int depth) {
 @property (nonatomic, weak) UIView *pv;
 @property (nonatomic, strong) CADisplayLink *link;
 @property (nonatomic, strong) UILabel *dbg;
+@property (nonatomic, assign) NSUInteger frames;
 - (void)start;
 - (void)stop;
 @end
@@ -170,6 +286,9 @@ static UIView *CMXFindPreview(UIView *root, int depth) {
     if (!v || !v.viewIfLoaded.window) return;
     if (!self.pv || !self.pv.window) self.pv = CMXFindPreview(v.view, 0);
     CMXApply(self.pv);
+
+    self.frames++;
+    if (CMXNum(CFSTR("NoDispersion"), 1) > 0.5 && (self.frames % 20) == 1) CMXScanDispersion();
 
     UIWindow *w = v.viewIfLoaded.window;
     if (CMXNum(CFSTR("Debug"), 0) > 0.5 && self.pv) {
@@ -182,8 +301,10 @@ static UIView *CMXFindPreview(UIView *root, int depth) {
         }
         if (self.dbg.superview != w) [w addSubview:self.dbg];
         CGRect r = [self.pv convertRect:self.pv.bounds toView:nil];
-        self.dbg.text = [NSString stringWithFormat:@" CamFix preview win=(%.0f,%.0f %.0fx%.0f) ", r.origin.x, r.origin.y, r.size.width, r.size.height];
-        self.dbg.frame = CGRectMake(4, 24, 260, 14);
+        NSString *disp = gDispNames.count ? [[gDispNames allObjects] componentsJoinedByString:@","] : @"-";
+        self.dbg.numberOfLines = 3;
+        self.dbg.text = [NSString stringWithFormat:@" CamFix win=(%.0f,%.0f %.0fx%.0f) disp:%@ ", r.origin.x, r.origin.y, r.size.width, r.size.height, disp];
+        self.dbg.frame = CGRectMake(4, 24, 330, 36);
         [w bringSubviewToFront:self.dbg];
     } else if (self.dbg) {
         [self.dbg removeFromSuperview];
