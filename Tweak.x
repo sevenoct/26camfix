@@ -1,5 +1,5 @@
 // CamFix - tweak pendamping 26Cam (Legacy) untuk iPhone 7 / iOS 15.
-// Foto  : 4:3 = bawaan; 16:9 = preview memanjang sampai belakang shutter + bingkai atas/bawah transparan.
+// Foto  : 4:3 = bawaan; 16:9 = preview memanjang sampai belakang shutter.
 // Square: preview dibuat kotak 1:1 yang rata dengan bagian atas kotaknya (tidak terpotong).
 // Video : tidak disentuh.
 // Pengaturan: Settings > CamFix.
@@ -66,7 +66,7 @@ static void CMXSetWide(BOOL w) {
 }
 
 // Hitung frame yang seharusnya untuk preview. NO = jangan diubah.
-// kind: 1 = Foto 16:9 (full-screen), 2 = Square (preview full-screen + bingkai transparan)
+// kind: 1 = Foto 16:9 (full-screen), 2 = Square (kotak 1:1 rata dengan bagian atas kotaknya)
 static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out, int *kind) {
     if (!pv.superview) return NO;
     UIView *c = CMXContainerFor(pv);
@@ -88,7 +88,7 @@ static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out, int *kind) {
     if (mode == 2) {
         if (CMXNum(CFSTR("SquareFix"), 1) < 0.5) return NO;
         *kind = 2;
-        *out = CGRectMake(p.x, p.y, cw, fullH);
+        *out = CGRectMake(p.x, p.y, f.size.width, f.size.height);
         return YES;
     }
     if (mode == 1) {
@@ -101,10 +101,10 @@ static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out, int *kind) {
 }
 
 // 26Cam memaksa y lewat setFrame, jadi posisi digeser langsung di layer:
-// bagian atas preview dirapatkan ke bagian atas layar Kamera (ViewfinderView).
+// bagian atas preview dirapatkan ke bagian atas kotak pembungkusnya.
 static void CMXShiftToTop(UIView *pv) {
     UIView *c = CMXContainerFor(pv);
-    UIView *ref = c.superview ? c.superview : c;
+    UIView *ref = c;
     if (!ref || !pv.window) return;
     CGRect rw = [ref convertRect:ref.bounds toView:nil];
     CGRect pw = [pv convertRect:pv.bounds toView:nil];
@@ -137,42 +137,6 @@ static void CMXFit(UIView *v, CGSize stale, CGSize now, int depth) {
             s.frame = CGRectMake(s.frame.origin.x, s.frame.origin.y, now.width, now.height);
         }
         CMXFit(s, stale, now, depth + 1);
-    }
-}
-
-static UIView *gDimTop = nil;
-static UIView *gDimBot = nil;
-
-static void CMXHideDims(void) {
-    gDimTop.hidden = YES;
-    gDimBot.hidden = YES;
-}
-
-static void CMXShowDims(UIView *pv, int kind) {
-    UIView *c = CMXContainerFor(pv);
-    UIView *vf = c.superview;
-    if (!c || !vf) return;
-    if (!gDimTop) {
-        gDimTop = [[UIView alloc] init];
-        gDimBot = [[UIView alloc] init];
-        for (UIView *d in @[gDimTop, gDimBot]) {
-            d.backgroundColor = [UIColor colorWithWhite:0 alpha:0.58];
-            d.userInteractionEnabled = NO;
-        }
-    }
-    for (UIView *d in @[gDimTop, gDimBot]) {
-        if (d.superview != vf) [vf insertSubview:d aboveSubview:c];
-        d.hidden = NO;
-    }
-    CGFloat w = vf.bounds.size.width, H = vf.bounds.size.height;
-    if (kind == 2) {
-        CGFloat top = c.frame.origin.y;
-        CGFloat bot = c.frame.origin.y + c.bounds.size.height;
-        gDimTop.frame = CGRectMake(0, 0, w, top);
-        gDimBot.frame = CGRectMake(0, bot, w, H - bot + 2);
-    } else {
-        gDimTop.frame = CGRectMake(0, 0, w, H * 0.15);
-        gDimBot.frame = CGRectMake(0, H * 0.76, w, H * 0.24 + 2);
     }
 }
 
@@ -259,39 +223,23 @@ static void CMXScanDispersion(void) {
     for (UIWindow *w in UIApplication.sharedApplication.windows) CMXKillDispersionView(w, 0);
 }
 
-static BOOL gClipChanged = NO;
-static __weak UIView *gClipView = nil;
-
-static void CMXRestoreClip(void) {
-    if (gClipChanged) {
-        gClipView.clipsToBounds = YES;
-        gClipChanged = NO;
-    }
-}
-
 static void CMXApply(UIView *pv) {
     if (gFixing || !pv) return;
     CGRect f = pv.frame;
     CGRect t = CGRectZero;
     int kind = 0;
-    if (!CMXTargetRect(pv, f, &t, &kind)) { CMXHideDims(); CMXRestoreClip(); return; }
+    if (!CMXTargetRect(pv, f, &t, &kind)) return;
     gFixing = YES;
     if (fabs(f.origin.x - t.origin.x) > 0.5 ||
         fabs(f.size.width - t.size.width) > 0.5 || fabs(f.size.height - t.size.height) > 0.5) {
         if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
         pv.frame = t;
     }
+    if (kind == 2) gStale = CGSizeZero;
     if (gStale.width > 0 && !CMXSizeNear(gStale, pv.bounds.size)) {
         CMXFit(pv, gStale, pv.bounds.size, 0);
     }
     CMXShiftToTop(pv);
-    if (kind == 2) {
-        UIView *c = CMXContainerFor(pv);
-        if (c && c.clipsToBounds) { c.clipsToBounds = NO; gClipView = c; gClipChanged = YES; }
-    } else {
-        CMXRestoreClip();
-    }
-    if (CMXNum(CFSTR("Translucent"), 1) > 0.5) CMXShowDims(pv, kind); else CMXHideDims();
     gFixing = NO;
 }
 
