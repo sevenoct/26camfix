@@ -17,6 +17,9 @@
 @interface CAMViewfinderViewController : UIViewController
 @end
 
+@interface CAM26SettingsSheet : UIView
+@end
+
 static BOOL gFixing = NO;
 static CGSize gStale = {0, 0};
 
@@ -39,38 +42,73 @@ static UIView *CMXContainerFor(UIView *pv) {
     return nil;
 }
 
+// Mode kamera terakhir yang terdeteksi: 0 = Video/lainnya, 1 = Foto, 2 = Square
+static int gMode = 0;
+// Aspek Foto: NO = 4:3 (normal), YES = 16:9 (full-screen). Dipilih lewat tombol ASPEK di menu Kamera.
+static BOOL gWide = NO;
+static BOOL gWideLoaded = NO;
+
+static BOOL CMXWide(void) {
+    if (!gWideLoaded) {
+        gWideLoaded = YES;
+        gWide = CMXNum(CFSTR("PhotoAspect"), 0) > 0.5;
+    }
+    return gWide;
+}
+
+static void CMXSetWide(BOOL w) {
+    gWide = w;
+    gWideLoaded = YES;
+    @try {
+        CFPreferencesSetAppValue(CFSTR("PhotoAspect"), w ? kCFBooleanTrue : kCFBooleanFalse, CFSTR("com.hasan.camfix"));
+        CFPreferencesAppSynchronize(CFSTR("com.hasan.camfix"));
+    } @catch (id e) {}
+}
+
 // Hitung frame yang seharusnya untuk preview. NO = jangan diubah.
-// kind: 1 = Foto 16:9 (full-screen), 2 = Square
+// kind: 1 = Foto 16:9 (full-screen), 2 = Square (preview full-screen + bingkai transparan)
 static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out, int *kind) {
-    if (CMXNum(CFSTR("Enabled"), 1) < 0.5) return NO;
     if (!pv.superview) return NO;
     UIView *c = CMXContainerFor(pv);
     if (!c) return NO;
     CGFloat cw = c.bounds.size.width, ch = c.bounds.size.height;
     if (f.size.height < 50.0 || f.size.width < 50.0) return NO;
-    CGPoint p = [pv.superview convertPoint:CGPointZero fromView:c];
 
-    if (fabs(f.size.height - f.size.width) < 6.0) {
+    int mode;
+    if (fabs(ch - cw) < 6.0) mode = 2;                 // kotak pembungkus berbentuk persegi = Square
+    else if (f.size.height >= ch - 0.5) mode = 0;      // preview layar penuh = Video
+    else mode = 1;                                     // Foto
+    gMode = mode;
+
+    if (CMXNum(CFSTR("Enabled"), 1) < 0.5) return NO;
+    CGPoint p = [pv.superview convertPoint:CGPointZero fromView:c];
+    UIView *vf = c.superview;
+    CGFloat fullH = (vf ? vf.bounds.size.height : 667.0) - 1.0;
+
+    if (mode == 2) {
         if (CMXNum(CFSTR("SquareFix"), 1) < 0.5) return NO;
         *kind = 2;
-        *out = CGRectMake(p.x, p.y, f.size.width, f.size.height);
+        *out = CGRectMake(p.x, p.y, cw, fullH);
         return YES;
     }
-    if (f.size.height >= ch - 0.5) return NO;   // Video (layar penuh)
-    if (CMXNum(CFSTR("PhotoAspect"), 1) < 0.5) return NO;   // 0 = 4:3 normal
-
-    *kind = 1;
-    *out = CGRectMake(p.x, p.y, cw, ch - 1.0);
-    return YES;
+    if (mode == 1) {
+        if (!CMXWide()) return NO;   // 4:3 normal
+        *kind = 1;
+        *out = CGRectMake(p.x, p.y, cw, fullH);
+        return YES;
+    }
+    return NO;
 }
 
-// 26Cam memaksa y lewat setFrame, jadi untuk Square posisi digeser langsung di layer.
-static void CMXShiftToContainerTop(UIView *pv) {
+// 26Cam memaksa y lewat setFrame, jadi posisi digeser langsung di layer:
+// bagian atas preview dirapatkan ke bagian atas layar Kamera (ViewfinderView).
+static void CMXShiftToTop(UIView *pv) {
     UIView *c = CMXContainerFor(pv);
-    if (!c || !pv.window) return;
-    CGRect cw = [c convertRect:c.bounds toView:nil];
+    UIView *ref = c.superview ? c.superview : c;
+    if (!ref || !pv.window) return;
+    CGRect rw = [ref convertRect:ref.bounds toView:nil];
     CGRect pw = [pv convertRect:pv.bounds toView:nil];
-    CGFloat dy = cw.origin.y - pw.origin.y;
+    CGFloat dy = rw.origin.y - pw.origin.y;
     if (fabs(dy) < 0.5 || fabs(dy) > 800.0) return;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -110,7 +148,7 @@ static void CMXHideDims(void) {
     gDimBot.hidden = YES;
 }
 
-static void CMXShowDims(UIView *pv) {
+static void CMXShowDims(UIView *pv, int kind) {
     UIView *c = CMXContainerFor(pv);
     UIView *vf = c.superview;
     if (!c || !vf) return;
@@ -118,7 +156,7 @@ static void CMXShowDims(UIView *pv) {
         gDimTop = [[UIView alloc] init];
         gDimBot = [[UIView alloc] init];
         for (UIView *d in @[gDimTop, gDimBot]) {
-            d.backgroundColor = [UIColor colorWithWhite:0 alpha:0.42];
+            d.backgroundColor = [UIColor colorWithWhite:0 alpha:0.58];
             d.userInteractionEnabled = NO;
         }
     }
@@ -126,10 +164,16 @@ static void CMXShowDims(UIView *pv) {
         if (d.superview != vf) [vf insertSubview:d aboveSubview:c];
         d.hidden = NO;
     }
-    CGFloat w = vf.bounds.size.width, ch = c.bounds.size.height;
-    CGFloat y0 = c.frame.origin.y;
-    gDimTop.frame = CGRectMake(0, y0, w, ch * 0.15);
-    gDimBot.frame = CGRectMake(0, y0 + ch * 0.76, w, ch * 0.24 + 2);
+    CGFloat w = vf.bounds.size.width, H = vf.bounds.size.height;
+    if (kind == 2) {
+        CGFloat top = c.frame.origin.y;
+        CGFloat bot = c.frame.origin.y + c.bounds.size.height;
+        gDimTop.frame = CGRectMake(0, 0, w, top);
+        gDimBot.frame = CGRectMake(0, bot, w, H - bot + 2);
+    } else {
+        gDimTop.frame = CGRectMake(0, 0, w, H * 0.15);
+        gDimBot.frame = CGRectMake(0, H * 0.76, w, H * 0.24 + 2);
+    }
 }
 
 #pragma mark - Chromatic dispersion
@@ -215,28 +259,39 @@ static void CMXScanDispersion(void) {
     for (UIWindow *w in UIApplication.sharedApplication.windows) CMXKillDispersionView(w, 0);
 }
 
+static BOOL gClipChanged = NO;
+static __weak UIView *gClipView = nil;
+
+static void CMXRestoreClip(void) {
+    if (gClipChanged) {
+        gClipView.clipsToBounds = YES;
+        gClipChanged = NO;
+    }
+}
+
 static void CMXApply(UIView *pv) {
     if (gFixing || !pv) return;
     CGRect f = pv.frame;
     CGRect t = CGRectZero;
     int kind = 0;
-    if (!CMXTargetRect(pv, f, &t, &kind)) { CMXHideDims(); return; }
+    if (!CMXTargetRect(pv, f, &t, &kind)) { CMXHideDims(); CMXRestoreClip(); return; }
     gFixing = YES;
-    if (kind == 1) {
-        if (fabs(f.origin.x - t.origin.x) > 0.5 ||
-            fabs(f.size.width - t.size.width) > 0.5 || fabs(f.size.height - t.size.height) > 0.5) {
-            if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
-            pv.frame = t;
-        }
-        if (gStale.width > 0 && !CMXSizeNear(gStale, pv.bounds.size)) {
-            CMXFit(pv, gStale, pv.bounds.size, 0);
-        }
-        CMXShiftToContainerTop(pv);
-        if (CMXNum(CFSTR("Translucent"), 1) > 0.5) CMXShowDims(pv); else CMXHideDims();
-    } else if (kind == 2) {
-        CMXShiftToContainerTop(pv);
-        CMXHideDims();
+    if (fabs(f.origin.x - t.origin.x) > 0.5 ||
+        fabs(f.size.width - t.size.width) > 0.5 || fabs(f.size.height - t.size.height) > 0.5) {
+        if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
+        pv.frame = t;
     }
+    if (gStale.width > 0 && !CMXSizeNear(gStale, pv.bounds.size)) {
+        CMXFit(pv, gStale, pv.bounds.size, 0);
+    }
+    CMXShiftToTop(pv);
+    if (kind == 2) {
+        UIView *c = CMXContainerFor(pv);
+        if (c && c.clipsToBounds) { c.clipsToBounds = NO; gClipView = c; gClipChanged = YES; }
+    } else {
+        CMXRestoreClip();
+    }
+    if (CMXNum(CFSTR("Translucent"), 1) > 0.5) CMXShowDims(pv, kind); else CMXHideDims();
     gFixing = NO;
 }
 
@@ -257,7 +312,7 @@ static UIView *CMXFindPreview(UIView *root, int depth) {
     if (!gFixing) {
         CGRect t = CGRectZero;
         int kind = 0;
-        if (CMXTargetRect((UIView *)self, f, &t, &kind) && kind == 1) {
+        if (CMXTargetRect((UIView *)self, f, &t, &kind)) {
             if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
             f = t;
         }
@@ -269,6 +324,35 @@ static UIView *CMXFindPreview(UIView *root, int depth) {
     CMXApply((UIView *)self);
 }
 %end
+
+static __weak UIView *gSheet = nil;
+
+static UIView *CMXFindClass(UIView *root, NSString *name, int depth) {
+    if (depth > 12) return nil;
+    if ([NSStringFromClass([root class]) isEqualToString:name]) return root;
+    for (UIView *s in root.subviews) {
+        UIView *r = CMXFindClass(s, name, depth + 1);
+        if (r) return r;
+    }
+    return nil;
+}
+
+// Label tombol ASPEK di menu Kamera: 4:3 / 16:9 / 1:1
+static void CMXUpdateAspectLabel(UIWindow *w) {
+    if (CMXNum(CFSTR("Enabled"), 1) < 0.5 || !w) return;
+    if (!gSheet || !gSheet.window) gSheet = CMXFindClass(w, @"CAM26SettingsSheet", 0);
+    UIView *sheet = gSheet;
+    if (!sheet) return;
+    @try {
+        id btn = [sheet valueForKey:@"aspectBtn"];
+        UILabel *lab = [btn valueForKey:@"titleLabel"];
+        if (![lab isKindOfClass:[UILabel class]]) return;
+        NSString *txt = nil;
+        if (gMode == 1) txt = CMXWide() ? @"16:9" : @"4:3";
+        else if (gMode == 2) txt = @"1:1";
+        if (txt && ![lab.text isEqualToString:txt]) lab.text = txt;
+    } @catch (id e) {}
+}
 
 @interface CMXTicker : NSObject
 @property (nonatomic, weak) UIViewController *vc;
@@ -287,7 +371,9 @@ static UIView *CMXFindPreview(UIView *root, int depth) {
     if (!self.pv || !self.pv.window) self.pv = CMXFindPreview(v.view, 0);
     CMXApply(self.pv);
 
+    UIWindow *w0 = v.viewIfLoaded.window;
     self.frames++;
+    if ((self.frames % 6) == 0) CMXUpdateAspectLabel(w0);
     if (CMXNum(CFSTR("NoDispersion"), 1) > 0.5 && (self.frames % 20) == 1) CMXScanDispersion();
 
     UIWindow *w = v.viewIfLoaded.window;
@@ -322,6 +408,26 @@ static UIView *CMXFindPreview(UIView *root, int depth) {
 @end
 
 static CMXTicker *gTicker = nil;
+
+%hook CAM26SettingsSheet
+- (void)aspectTapped {
+    if (CMXNum(CFSTR("Enabled"), 1) > 0.5 && gMode == 1) {
+        if (!CMXWide()) {
+            // 4:3 -> 16:9 (tetap di mode Foto)
+            CMXSetWide(YES);
+            for (UIWindow *w in UIApplication.sharedApplication.windows) {
+                UIView *pv = CMXFindPreview(w, 0);
+                if (pv) { CMXApply(pv); [pv.superview setNeedsLayout]; }
+            }
+            CMXUpdateAspectLabel(((UIView *)self).window);
+            return;
+        }
+        // 16:9 -> 1:1 (diteruskan ke 26Cam, pindah ke Square)
+        CMXSetWide(NO);
+    }
+    %orig;
+}
+%end
 
 %hook CAMViewfinderViewController
 - (void)viewDidLayoutSubviews {
