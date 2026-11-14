@@ -2,7 +2,7 @@
 // Foto  : preview dibuat memanjang sampai ke belakang tombol shutter (seperti mode Video).
 // Square: preview dibuat kotak 1:1 yang rata dengan bagian atas kotaknya (tidak terpotong).
 // Video : tidak disentuh.
-// Pengaturan: Settings > CamFix.
+// Pengaturan: Settings > CamFix (Enabled / PhotoFix / SquareFix).
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -38,8 +38,9 @@ static UIView *CMXContainerFor(UIView *pv) {
     return nil;
 }
 
-// Hitung frame yang seharusnya untuk preview. NO = jangan diubah (Video, atau dimatikan).
-static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out) {
+// Hitung frame yang seharusnya untuk preview. NO = jangan diubah.
+// kind: 1 = Foto, 2 = Square
+static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out, int *kind) {
     if (CMXNum(CFSTR("Enabled"), 1) < 0.5) return NO;
     if (!pv.superview) return NO;
     UIView *c = CMXContainerFor(pv);
@@ -49,23 +50,34 @@ static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out) {
     CGPoint p = [pv.superview convertPoint:CGPointZero fromView:c];
 
     if (fabs(f.size.height - f.size.width) < 6.0) {
-        // Square (1:1)
-        *out = CGRectMake(p.x, p.y + (CGFloat)CMXNum(CFSTR("SquareY"), 0), f.size.width, f.size.height);
+        if (CMXNum(CFSTR("SquareFix"), 1) < 0.5) return NO;
+        *kind = 2;
+        *out = CGRectMake(p.x, p.y, f.size.width, f.size.height);
         return YES;
     }
     if (f.size.height >= ch - 5.0) return NO;   // Video (layar penuh)
+    if (CMXNum(CFSTR("PhotoFix"), 1) < 0.5) return NO;
 
-    // Foto
-    CGFloat y = p.y + (CGFloat)CMXNum(CFSTR("PhotoY"), 0);
-    if (CMXNum(CFSTR("PhotoFull"), 1) > 0.5) {
-        CGFloat bottom = (CGFloat)CMXNum(CFSTR("PhotoBottom"), 40);
-        CGFloat h = ch - bottom - (y - p.y);
-        if (h < f.size.height) h = f.size.height;
-        *out = CGRectMake(p.x, y, cw, h);
-    } else {
-        *out = CGRectMake(p.x, y, f.size.width, f.size.height);
-    }
+    *kind = 1;
+    CGFloat h = ch - 40.0 - 0.0;
+    if (h < f.size.height) h = f.size.height;
+    *out = CGRectMake(p.x, p.y, cw, h);
     return YES;
+}
+
+// 26Cam memaksa y lewat setFrame, jadi untuk Square posisi digeser langsung di layer.
+static void CMXShiftToContainerTop(UIView *pv) {
+    UIView *c = CMXContainerFor(pv);
+    if (!c || !pv.window) return;
+    CGRect cw = [c convertRect:c.bounds toView:nil];
+    CGRect pw = [pv convertRect:pv.bounds toView:nil];
+    CGFloat dy = cw.origin.y - pw.origin.y;
+    if (fabs(dy) < 0.5 || fabs(dy) > 800.0) return;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    CGPoint pos = pv.layer.position;
+    pv.layer.position = CGPointMake(pos.x, pos.y + dy);
+    [CATransaction commit];
 }
 
 static BOOL CMXSizeNear(CGSize a, CGSize b) {
@@ -95,15 +107,20 @@ static void CMXApply(UIView *pv) {
     if (gFixing || !pv) return;
     CGRect f = pv.frame;
     CGRect t = CGRectZero;
-    if (!CMXTargetRect(pv, f, &t)) return;
+    int kind = 0;
+    if (!CMXTargetRect(pv, f, &t, &kind)) return;
     gFixing = YES;
-    if (fabs(f.origin.y - t.origin.y) > 0.5 || fabs(f.origin.x - t.origin.x) > 0.5 ||
-        fabs(f.size.width - t.size.width) > 0.5 || fabs(f.size.height - t.size.height) > 0.5) {
-        if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
-        pv.frame = t;
-    }
-    if (gStale.width > 0 && !CMXSizeNear(gStale, pv.bounds.size)) {
-        CMXFit(pv, gStale, pv.bounds.size, 0);
+    if (kind == 1) {
+        if (fabs(f.origin.y - t.origin.y) > 0.5 || fabs(f.origin.x - t.origin.x) > 0.5 ||
+            fabs(f.size.width - t.size.width) > 0.5 || fabs(f.size.height - t.size.height) > 0.5) {
+            if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
+            pv.frame = t;
+        }
+        if (gStale.width > 0 && !CMXSizeNear(gStale, pv.bounds.size)) {
+            CMXFit(pv, gStale, pv.bounds.size, 0);
+        }
+    } else if (kind == 2) {
+        CMXShiftToContainerTop(pv);
     }
     gFixing = NO;
 }
@@ -124,7 +141,8 @@ static UIView *CMXFindPreview(UIView *root, int depth) {
 - (void)setFrame:(CGRect)f {
     if (!gFixing) {
         CGRect t = CGRectZero;
-        if (CMXTargetRect((UIView *)self, f, &t)) {
+        int kind = 0;
+        if (CMXTargetRect((UIView *)self, f, &t, &kind) && kind == 1) {
             if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
             f = t;
         }
