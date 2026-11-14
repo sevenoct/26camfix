@@ -52,23 +52,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Bingkai atas dan bawah dibuat agak tembus pandang seperti iOS 26 (Foto 16:9 dan Square). Chromatic dispersion dicari dan dimatikan otomatis di Kamera.</string>
+			<string>Chromatic dispersion dicari dan dimatikan otomatis di Kamera.</string>
 			<key>label</key>
 			<string>Tampilan</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.hasan.camfix/prefs</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.hasan.camfix</string>
-			<key>key</key>
-			<string>Translucent</string>
-			<key>label</key>
-			<string>Bingkai transparan</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
