@@ -1,210 +1,221 @@
-// CamFull - pendamping 26Cam (Legacy), khusus iPhone 7 / iOS 15 (layar 375x667).
-// Dasar: hasil dump hierarki view (CAMPreviewView berada di dalam ...MaskingView).
-//  - Foto : PreviewView 375x500 y=-24  -> diisi penuh 375x667 (di belakang shutter) = tampilan 16:9
-//  - Video: PreviewView 375x667 y=-40  -> diisi penuh (hilangkan strip hitam bawah)
-//  - Square: PreviewView y=-24 menggeser gambar keluar kotak -> dirapatkan ke kotak square
+// CamFix - tweak pendamping 26Cam (Legacy) untuk iPhone 7 / iOS 15.
+// Foto  : preview dibuat memanjang sampai ke belakang tombol shutter (seperti mode Video).
+// Square: preview dibuat kotak 1:1 yang rata dengan bagian atas kotaknya (tidak terpotong).
+// Video : tidak disentuh.
+// Pengaturan: Settings > CamFix.
+
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <objc/runtime.h>
+#import <math.h>
 
-static BOOL gEnabled = YES, gFullPhoto = YES, gFullVideo = YES, gFixSquare = YES, gDebug = YES, gAspectHook = NO;
-static CGFloat gPhotoY = 0;
-static __weak UIView *gPV;
-static CGRect gReq;            // frame terakhir yang diminta oleh Kamera/26Cam
-static BOOL gReqValid, gInternal;
-static NSString *gMode = @"-";
-static UILabel *gLabel;
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
-static void CFullBlack(UIView *v, NSMutableString *out, int d) {
-    if (d > 9 || out.length > 260) return;
-    for (UIView *s in v.subviews) {
-        if (s == (UIView *)gLabel) continue;
-        CGFloat r, g, b, a;
-        UIColor *c = s.backgroundColor;
-        if (c && !s.hidden && s.alpha > 0.5 && [c getRed:&r green:&g blue:&b alpha:&a] && a > 0.9 && r < 0.06 && g < 0.06 && b < 0.06) {
-            CGRect f = [s.superview convertRect:s.frame toView:nil];
-            if (f.size.width >= 300 && f.size.height >= 40)
-                [out appendFormat:@"black: %@ %@\n", NSStringFromClass(s.class), NSStringFromCGRect(f)];
-        }
-        CFullBlack(s, out, d + 1);
+@interface CAMPreviewView : UIView
+@end
+
+@interface CAMViewfinderViewController : UIViewController
+@end
+
+static BOOL gFixing = NO;
+static CGSize gStale = {0, 0};
+
+static double CMXNum(CFStringRef key, double def) {
+    double r = def;
+    CFPropertyListRef v = CFPreferencesCopyAppValue(key, CFSTR("com.hasan.camfix"));
+    if (v) {
+        if (CFGetTypeID(v) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)v, kCFNumberDoubleType, &r);
+        else if (CFGetTypeID(v) == CFBooleanGetTypeID()) r = CFBooleanGetValue((CFBooleanRef)v) ? 1 : 0;
+        CFRelease(v);
     }
+    return r;
 }
 
-#pragma mark - Pengaturan
-
-static void CFullLoad(void) {
-    CFStringRef dom = CFSTR("com.hasan.camfull");
-    CFPreferencesAppSynchronize(dom);
-    id (^get)(NSString *) = ^id(NSString *k) { return (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)k, dom); };
-    BOOL (^b)(NSString *, BOOL) = ^BOOL(NSString *k, BOOL d) { id v = get(k); return [v isKindOfClass:NSNumber.class] ? [v boolValue] : d; };
-    gEnabled = b(@"Enabled", YES);
-    gFullPhoto = b(@"FullPhoto", YES);
-    gFullVideo = b(@"FullVideo", YES);
-    gFixSquare = b(@"FixSquare", YES);
-    gAspectHook = b(@"AspectHook", NO);
-    gDebug = b(@"Debug", YES);
-    id y = get(@"PhotoY");
-    gPhotoY = [y isKindOfClass:NSNumber.class] ? [y doubleValue] : 0;
-}
-
-#pragma mark - Logika frame
-
-static UIView *CFullMask(UIView *pv) {
-    for (UIView *v = pv.superview; v; v = v.superview)
-        if ([NSStringFromClass(v.class) containsString:@"MaskingView"]) return v;
+static UIView *CMXContainerFor(UIView *pv) {
+    for (UIView *v = pv.superview; v; v = v.superview) {
+        NSString *n = NSStringFromClass([v class]);
+        if ([n containsString:@"PreviewContainer"] || [n containsString:@"MaskingView"]) return v;
+    }
     return nil;
 }
 
-static CGRect CFullTarget(UIView *pv, CGRect cur) {
-    if (!gEnabled) return cur;
-    UIView *m = CFullMask(pv), *par = pv.superview;
-    if (!m || !par) return cur;
-    CGRect mr = [par convertRect:m.bounds fromView:m];
-    CGFloat w = mr.size.width, h = mr.size.height;
-    if (w < 1) return cur;
-    if (fabs(w - h) < 2) {                       // Square
-        gMode = @"square";
-        return gFixSquare ? mr : cur;
+// Hitung frame yang seharusnya untuk preview. NO = jangan diubah (Video, atau dimatikan).
+static BOOL CMXTargetRect(UIView *pv, CGRect f, CGRect *out) {
+    if (CMXNum(CFSTR("Enabled"), 1) < 0.5) return NO;
+    if (!pv.superview) return NO;
+    UIView *c = CMXContainerFor(pv);
+    if (!c) return NO;
+    CGFloat cw = c.bounds.size.width, ch = c.bounds.size.height;
+    if (f.size.height < 50.0 || f.size.width < 50.0) return NO;
+    CGPoint p = [pv.superview convertPoint:CGPointZero fromView:c];
+
+    if (fabs(f.size.height - f.size.width) < 6.0) {
+        // Square (1:1)
+        *out = CGRectMake(p.x, p.y + (CGFloat)CMXNum(CFSTR("SquareY"), 0), f.size.width, f.size.height);
+        return YES;
     }
-    if (fabs(cur.size.height - cur.size.width * 4.0 / 3.0) < 3) {   // Foto 4:3
-        gMode = gFullPhoto ? @"photo-full" : @"photo-4:3";
-        if (gFullPhoto) return mr;
-        return CGRectMake(mr.origin.x, mr.origin.y + gPhotoY, cur.size.width, cur.size.height);
+    if (f.size.height >= ch - 5.0) return NO;   // Video (layar penuh)
+
+    // Foto
+    CGFloat y = p.y + (CGFloat)CMXNum(CFSTR("PhotoY"), 0);
+    if (CMXNum(CFSTR("PhotoFull"), 1) > 0.5) {
+        CGFloat bottom = (CGFloat)CMXNum(CFSTR("PhotoBottom"), 40);
+        CGFloat h = ch - bottom - (y - p.y);
+        if (h < f.size.height) h = f.size.height;
+        *out = CGRectMake(p.x, y, cw, h);
+    } else {
+        *out = CGRectMake(p.x, y, f.size.width, f.size.height);
     }
-    if (cur.size.height >= h - 2) {              // Video / layar penuh
-        gMode = gFullVideo ? @"video-full" : @"video";
-        return gFullVideo ? mr : cur;
-    }
-    gMode = @"other";
-    return cur;
+    return YES;
 }
 
-static BOOL CFullNear(CGFloat a, CGFloat b) { return fabs(a - b) < 2; }
-
-// Anak-anak PreviewView (VideoPreviewView, layer preview, grid) punya ukuran sendiri (mis. 375x500)
-// dan tidak ikut membesar. Samakan dengan bounds PreviewView.
-static BOOL CFullIsFill(CGRect f, CGRect b) {
-    return fabs(f.origin.x) < 2 && fabs(f.origin.y) < 2 &&
-           f.size.width >= 300 && CFullNear(f.size.width, b.size.width) &&
-           f.size.height >= 300 && !CFullNear(f.size.height, b.size.height);
+static BOOL CMXSizeNear(CGSize a, CGSize b) {
+    return fabs(a.width - b.width) < 1.5 && fabs(a.height - b.height) < 1.5;
 }
 
-static void CFullFillRec(UIView *v, CGRect b, int d) {
-    if (d > 5) return;
-    for (CALayer *l in v.layer.sublayers)
-        if (CFullIsFill(l.frame, b)) l.frame = b;
+// Anak-anak preview yang masih berukuran lama ikut disesuaikan.
+static void CMXFit(UIView *v, CGSize stale, CGSize now, int depth) {
+    if (depth > 5) return;
+    for (CALayer *l in v.layer.sublayers) {
+        if (CMXSizeNear(l.bounds.size, stale)) {
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            l.frame = CGRectMake(l.frame.origin.x, l.frame.origin.y, now.width, now.height);
+            [CATransaction commit];
+        }
+    }
     for (UIView *s in v.subviews) {
-        if (CFullIsFill(s.frame, b)) s.frame = b;
-        CFullFillRec(s, b, d + 1);
+        if (CMXSizeNear(s.bounds.size, stale)) {
+            s.frame = CGRectMake(s.frame.origin.x, s.frame.origin.y, now.width, now.height);
+        }
+        CMXFit(s, stale, now, depth + 1);
     }
 }
 
-static void CFullEnforce(UIView *pv) {
-    if (!pv || !pv.superview) return;
-    CGRect cur = gReqValid ? gReq : pv.frame;
-    CGRect t = CFullTarget(pv, cur);
-    if (!gEnabled) return;
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    gInternal = YES;
-    if (!CGRectEqualToRect(pv.frame, t)) {
-        // bounds+center, bukan frame: 26Cam ikut campur di setFrame: dan memaksa y = -24
-        pv.bounds = CGRectMake(0, 0, t.size.width, t.size.height);
-        pv.center = CGPointMake(CGRectGetMidX(t), CGRectGetMidY(t));
+static void CMXApply(UIView *pv) {
+    if (gFixing || !pv) return;
+    CGRect f = pv.frame;
+    CGRect t = CGRectZero;
+    if (!CMXTargetRect(pv, f, &t)) return;
+    gFixing = YES;
+    if (fabs(f.origin.y - t.origin.y) > 0.5 || fabs(f.origin.x - t.origin.x) > 0.5 ||
+        fabs(f.size.width - t.size.width) > 0.5 || fabs(f.size.height - t.size.height) > 0.5) {
+        if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
+        pv.frame = t;
     }
-    gInternal = NO;
-    CFullFillRec(pv, pv.bounds, 0);
-    [CATransaction commit];
-}
-
-#pragma mark - Debug label + display link (penegak tiap frame)
-
-@interface CFullTicker : NSObject
-+ (void)start;
-@end
-@implementation CFullTicker
-+ (void)start {
-    static CADisplayLink *dl; static CFullTicker *t;
-    if (dl) return;
-    t = [CFullTicker new];
-    dl = [CADisplayLink displayLinkWithTarget:t selector:@selector(tick)];
-    [dl addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-}
-- (void)tick {
-    static int n;
-    UIView *pv = gPV;
-    if (!pv) return;
-    CFullEnforce(pv);
-    if (!gDebug) { [gLabel removeFromSuperview]; gLabel = nil; return; }
-    if (++n % 20) return;
-    UIWindow *w = pv.window;
-    if (!w) return;
-    if (!gLabel) {
-        gLabel = [[UILabel alloc] initWithFrame:CGRectMake(6, 40, w.bounds.size.width - 12, 90)];
-        gLabel.font = [UIFont monospacedSystemFontOfSize:8 weight:UIFontWeightRegular];
-        gLabel.textColor = UIColor.greenColor;
-        gLabel.numberOfLines = 8;
-        gLabel.userInteractionEnabled = NO;
+    if (gStale.width > 0 && !CMXSizeNear(gStale, pv.bounds.size)) {
+        CMXFit(pv, gStale, pv.bounds.size, 0);
     }
-    if (gLabel.superview != w) [w addSubview:gLabel];
-    [w bringSubviewToFront:gLabel];
-    UIView *m = CFullMask(pv);
-    NSMutableString *blk = [NSMutableString string];
-    CFullBlack(w, blk, 0);
-    gLabel.text = [NSString stringWithFormat:@"CamFull 0.2 | mode:%@\npv:%@\nmask:%@\n%@", gMode,
-        NSStringFromCGRect([pv.superview convertRect:pv.frame toView:nil]),
-        m ? NSStringFromCGRect([m.superview convertRect:m.frame toView:nil]) : @"-", blk];
+    gFixing = NO;
 }
-@end
 
-#pragma mark - Hook
+static UIView *CMXFindPreview(UIView *root, int depth) {
+    if (depth > 8) return nil;
+    NSString *n = NSStringFromClass([root class]);
+    if ([n isEqualToString:@"CAMPreviewView"] ||
+        ([n hasSuffix:@"PreviewView"] && ![n containsString:@"Video"] && ![n containsString:@"Container"])) return root;
+    for (UIView *s in root.subviews) {
+        UIView *r = CMXFindPreview(s, depth + 1);
+        if (r) return r;
+    }
+    return nil;
+}
 
 %hook CAMPreviewView
-- (void)didMoveToWindow {
-    %orig;
-    gPV = (UIView *)self;
-    [CFullTicker start];
-}
 - (void)setFrame:(CGRect)f {
-    if (gInternal) { %orig; return; }
-    gReq = f; gReqValid = YES;
-    gPV = (UIView *)self;
-    UIView *pv = (UIView *)self;
-    %orig(pv.superview ? CFullTarget(pv, f) : f);
-    CFullEnforce(pv);
+    if (!gFixing) {
+        CGRect t = CGRectZero;
+        if (CMXTargetRect((UIView *)self, f, &t)) {
+            if (!CMXSizeNear(f.size, t.size)) gStale = f.size;
+            f = t;
+        }
+    }
+    %orig(f);
 }
 - (void)layoutSubviews {
     %orig;
-    CFullEnforce((UIView *)self);
+    CMXApply((UIView *)self);
 }
 %end
 
-// Opsional: tombol ASPECT di sheet pengaturan 26Cam berganti 4:3 <-> 16:9 (layar penuh)
-static void CFullSetAspectLabel(UIView *btn, NSString *text) {
-    if ([btn isKindOfClass:UILabel.class]) {
-        UILabel *l = (UILabel *)btn;
-        if ([l.text containsString:@":"]) l.text = text;
+@interface CMXTicker : NSObject
+@property (nonatomic, weak) UIViewController *vc;
+@property (nonatomic, weak) UIView *pv;
+@property (nonatomic, strong) CADisplayLink *link;
+@property (nonatomic, strong) UILabel *dbg;
+- (void)start;
+- (void)stop;
+@end
+
+@implementation CMXTicker
+- (void)tick {
+    UIViewController *v = self.vc;
+    if (!v || !v.viewIfLoaded.window) return;
+    if (!self.pv || !self.pv.window) self.pv = CMXFindPreview(v.view, 0);
+    CMXApply(self.pv);
+
+    UIWindow *w = v.viewIfLoaded.window;
+    if (CMXNum(CFSTR("Debug"), 0) > 0.5 && self.pv) {
+        if (!self.dbg) {
+            self.dbg = [[UILabel alloc] init];
+            self.dbg.font = [UIFont systemFontOfSize:9];
+            self.dbg.textColor = [UIColor greenColor];
+            self.dbg.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+            self.dbg.userInteractionEnabled = NO;
+        }
+        if (self.dbg.superview != w) [w addSubview:self.dbg];
+        CGRect r = [self.pv convertRect:self.pv.bounds toView:nil];
+        self.dbg.text = [NSString stringWithFormat:@" CamFix preview win=(%.0f,%.0f %.0fx%.0f) ", r.origin.x, r.origin.y, r.size.width, r.size.height];
+        self.dbg.frame = CGRectMake(4, 24, 260, 14);
+        [w bringSubviewToFront:self.dbg];
+    } else if (self.dbg) {
+        [self.dbg removeFromSuperview];
     }
-    for (UIView *s in btn.subviews) CFullSetAspectLabel(s, text);
 }
+- (void)start {
+    if (self.link) return;
+    self.link = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick)];
+    [self.link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+}
+- (void)stop {
+    [self.link invalidate];
+    self.link = nil;
+}
+@end
 
-%hook CAM26SettingsSheet
-- (void)aspectTapped {
-    if (!gAspectHook) { %orig; return; }
-    gFullPhoto = !gFullPhoto;
-    @try { CFullSetAspectLabel([(id)self valueForKey:@"aspectBtn"], gFullPhoto ? @"16:9" : @"4:3"); } @catch (id e) {}
-    CFullEnforce(gPV);
+static CMXTicker *gTicker = nil;
+
+%hook CAMViewfinderViewController
+- (void)viewDidLayoutSubviews {
+    %orig;
+    UIViewController *vc = (UIViewController *)self;
+    CMXApply(CMXFindPreview(vc.view, 0));
+    if (!gTicker) gTicker = [CMXTicker new];
+    gTicker.vc = vc;
+    [gTicker start];
+}
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    UIViewController *vc = (UIViewController *)self;
+    if (!gTicker) gTicker = [CMXTicker new];
+    gTicker.vc = vc;
+    [gTicker start];
+}
+- (void)viewDidDisappear:(BOOL)animated {
+    %orig;
+    [gTicker stop];
 }
 %end
 
-static void CFullPrefs(CFNotificationCenterRef c, void *o, CFStringRef n, const void *obj, CFDictionaryRef u) {
-    dispatch_async(dispatch_get_main_queue(), ^{ CFullLoad(); CFullEnforce(gPV); });
+static void CMXPrefsChanged(CFNotificationCenterRef c, void *o, CFStringRef n, const void *obj, CFDictionaryRef u) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (UIWindow *w in UIApplication.sharedApplication.windows) {
+            UIView *pv = CMXFindPreview(w, 0);
+            if (pv) { CMXApply(pv); [pv.superview setNeedsLayout]; }
+        }
+    });
 }
 
 %ctor {
-    @autoreleasepool {
-        CFullLoad();
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, CFullPrefs,
-            CFSTR("com.hasan.camfull/prefs"), NULL, CFNotificationSuspensionBehaviorCoalesce);
-    }
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, CMXPrefsChanged,
+        CFSTR("com.hasan.camfix/prefs"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 }
