@@ -30,48 +30,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>4:3 = ukuran bawaan 26Cam. 16:9 = preview memanjang sampai ke belakang tombol shutter.</string>
+			<string>Pilih aspek lewat tombol ASPEK di menu Kamera: 4:3 (normal) &gt; 16:9 (full-screen) &gt; 1:1 (Square).</string>
 			<key>label</key>
 			<string>Aspek Foto</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.hasan.camfix/prefs</string>
-			<key>cell</key>
-			<string>PSLinkListCell</string>
-			<key>default</key>
-			<integer>1</integer>
-			<key>defaults</key>
-			<string>com.hasan.camfix</string>
-			<key>detail</key>
-			<string>PSListItemsController</string>
-			<key>key</key>
-			<string>PhotoAspect</string>
-			<key>label</key>
-			<string>Aspek Foto</string>
-			<key>shortTitles</key>
-			<array>
-				<string>4:3</string>
-				<string>16:9</string>
-			</array>
-			<key>validTitles</key>
-			<array>
-				<string>4:3 (normal)</string>
-				<string>16:9 (full-screen)</string>
-			</array>
-			<key>validValues</key>
-			<array>
-				<integer>0</integer>
-				<integer>1</integer>
-			</array>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Square 1:1: preview kotak penuh, tidak terpotong.</string>
-			<key>label</key>
-			<string>Square</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -91,7 +52,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Bingkai atas dan bawah dibuat agak tembus pandang seperti iOS 26 (hanya mode Foto 16:9). Chromatic dispersion dicari dan dimatikan otomatis di Kamera.</string>
+			<string>Bingkai atas dan bawah dibuat agak tembus pandang seperti iOS 26 (Foto 16:9 dan Square). Chromatic dispersion dicari dan dimatikan otomatis di Kamera.</string>
 			<key>label</key>
 			<string>Tampilan</string>
 		</dict>
