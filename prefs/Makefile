@@ -8,6 +8,6 @@ CamFixPrefs_FILES = CMXRootListController.m
 CamFixPrefs_FRAMEWORKS = UIKit
 CamFixPrefs_LDFLAGS = -undefined dynamic_lookup
 CamFixPrefs_INSTALL_PATH = /Library/PreferenceBundles
-CamFixPrefs_CFLAGS = -fobjc-arc
+CamFixPrefs_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 
 include $(THEOS_MAKE_PATH)/bundle.mk
