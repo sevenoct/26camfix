@@ -8,7 +8,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = CamFix
 
 CamFix_FILES = Tweak.x
-CamFix_CFLAGS = -fobjc-arc
+CamFix_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 CamFix_FRAMEWORKS = UIKit QuartzCore
 
 include $(THEOS_MAKE_PATH)/tweak.mk

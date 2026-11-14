@@ -6,6 +6,16 @@
 // Pengaturan: Settings > CamFix (PhotoY / SquareY / Enabled).
 
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
+#import <math.h>
+
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
+@interface CAMPreviewView : UIView
+@end
+
+@interface CAMViewfinderViewController : UIViewController
+@end
 
 static BOOL gFixing = NO;
 
