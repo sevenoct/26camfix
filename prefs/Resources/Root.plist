@@ -24,15 +24,15 @@
 			<key>key</key>
 			<string>Enabled</string>
 			<key>label</key>
-			<string>Aktifkan perbaikan</string>
+			<string>Aktifkan tweak</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Aktif = preview Foto memanjang sampai ke belakang tombol shutter (seperti contoh iOS 26). Mati = ukuran 4:3 biasa.</string>
+			<string>Foto: preview memanjang sampai ke belakang tombol shutter. Square: preview kotak 1:1 tidak terpotong.</string>
 			<key>label</key>
-			<string>Foto</string>
+			<string>Perbaikan</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -44,99 +44,27 @@
 			<key>defaults</key>
 			<string>com.hasan.camfix</string>
 			<key>key</key>
-			<string>PhotoFull</string>
+			<string>PhotoFix</string>
 			<key>label</key>
-			<string>Foto full-screen (di belakang shutter)</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Geser preview Foto naik/turun (poin). 0 = rata dengan atas layar.</string>
-			<key>label</key>
-			<string>Foto - posisi atas</string>
+			<string>Foto fix</string>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
 			<string>com.hasan.camfix/prefs</string>
 			<key>cell</key>
-			<string>PSSliderCell</string>
+			<string>PSSwitchCell</string>
 			<key>default</key>
-			<real>0.0</real>
+			<true/>
 			<key>defaults</key>
 			<string>com.hasan.camfix</string>
-			<key>isContinuous</key>
-			<true/>
 			<key>key</key>
-			<string>PhotoY</string>
-			<key>max</key>
-			<real>150.0</real>
-			<key>min</key>
-			<real>-100.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Sisa ruang hitam di bawah preview (poin). Default 40 sama seperti mode Video. Makin kecil = preview makin turun ke bawah.</string>
+			<string>SquareFix</string>
 			<key>label</key>
-			<string>Foto - jarak bawah</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.hasan.camfix/prefs</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>40.0</real>
-			<key>defaults</key>
-			<string>com.hasan.camfix</string>
-			<key>isContinuous</key>
-			<true/>
-			<key>key</key>
-			<string>PhotoBottom</string>
-			<key>max</key>
-			<real>250.0</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>showValue</key>
-			<true/>
+			<string>Square fix</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Geser preview Square. 0 = rata dengan bagian atas kotak square.</string>
-			<key>label</key>
-			<string>Square (1:1)</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.hasan.camfix/prefs</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.0</real>
-			<key>defaults</key>
-			<string>com.hasan.camfix</string>
-			<key>isContinuous</key>
-			<true/>
-			<key>key</key>
-			<string>SquareY</string>
-			<key>max</key>
-			<real>150.0</real>
-			<key>min</key>
-			<real>-100.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>Tampilkan teks hijau kecil berisi posisi preview di layar Kamera.</string>
 			<key>label</key>
 			<string>Debug</string>
 		</dict>
@@ -158,7 +86,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>Perubahan langsung diterapkan. Kalau belum berubah, matikan Kamera dari app switcher lalu buka lagi.</string>
+			<string>Kalau belum berubah, matikan Kamera dari app switcher lalu buka lagi.</string>
 			<key>label</key>
 			<string>Terapkan</string>
 		</dict>
