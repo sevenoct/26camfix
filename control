@@ -1,9 +1,11 @@
-Package: com.hasan.camfix
-Name: CamFix (26Cam Photo Preview)
-Depends: mobilesubstrate, preferenceloader, firmware (>= 15.0)
-Version: 1.3.2
+Package: com.hasan.camfull
+Name: CamFull
+Version: 0.1.0
 Architecture: iphoneos-arm64
-Description: Fixes cropped Photo/Square preview of 26Cam (Legacy) on iPhone 7 / iOS 15. Works as a companion to 26Cam.
+Description: Pendamping 26Cam (Legacy): preview Foto/Video layar penuh di belakang tombol shutter, perbaikan Square, mode 16:9
 Maintainer: Hasan
 Author: Hasan
 Section: Tweaks
+Depends: mobilesubstrate, preferenceloader, firmware (>= 15.0)
+Conflicts: com.hasan.camfix
+Replaces: com.hasan.camfix
