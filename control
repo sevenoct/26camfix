@@ -1,6 +1,6 @@
 Package: com.hasan.camfull
 Name: CamFull
-Version: 0.1.0
+Version: 0.2.0
 Architecture: iphoneos-arm64
 Description: Pendamping 26Cam (Legacy): preview Foto/Video layar penuh di belakang tombol shutter, perbaikan Square, mode 16:9
 Maintainer: Hasan
